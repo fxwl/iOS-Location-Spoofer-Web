@@ -154,6 +154,9 @@ window.__CFG__=${JSON.stringify({ token, amapKey: hasAmap ? 'server-proxy' : '' 
         proxy.searchParams.set('keywords', keywords);
         var authToken = localStorage.getItem('gps_token') || serverToken || '';
         if (authToken) proxy.searchParams.set('token', authToken);
+        // Cache-buster prevents a stale HTML root response from a previous deployment
+        // being reused for this API-shaped request on a custom domain.
+        proxy.searchParams.set('_ts', String(Date.now()));
 
         return nativeFetch(proxy.toString(), { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
           .then(parseProxyResponse)
