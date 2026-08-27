@@ -22,7 +22,7 @@ function textValue(value) {
   return value == null ? '' : String(value);
 }
 
-async function handleAmapSearch(request, env, url) {
+async function handleAmapSearch(env, url) {
   const token = url.searchParams.get('token');
   if (env.TOKEN && token !== env.TOKEN) {
     return apiJson({ ok: false, error: 'Unauthorized' }, 401);
@@ -101,7 +101,7 @@ export async function onRequestGet(context) {
   // Reuse the already-working root Pages Function as the AMap API endpoint.
   // This avoids relying on a newly generated /search route or global middleware.
   if (requestUrl.searchParams.get('__api') === 'search') {
-    return handleAmapSearch(request, env, requestUrl);
+    return handleAmapSearch(env, requestUrl);
   }
 
   const response = await env.ASSETS.fetch(request);
