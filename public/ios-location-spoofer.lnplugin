@@ -1,0 +1,27 @@
+#!name=iOS Location Spoofer (Self-Hosted)
+#!desc=拦截 Apple 定位服务回传的坐标并替换为 Web 面板中锁定的位置。Loon 自建服务版，基于 mekos2772/ios-location-spoofer。
+#!homepage=https://github.com/fxwl/iOS-Location-Spoofer-Web
+
+# Loon 插件参数必须使用 argument=[{参数名},...] 格式。
+# 默认通过 configHost + configToken 读取本项目 /loc.json；插件 UI 中经纬度仅作为远程配置不可用时的备用值。
+
+[Argument]
+enabled = switch,true,tag=启用定位修改,desc=关闭后直接放行原始定位数据
+latitude = input,"39.90872",tag=纬度(备用),desc=远程配置不可用时使用
+longitude = input,"116.39748",tag=经度(备用),desc=远程配置不可用时使用
+altitude = input,"44",tag=海拔(米),desc=目标海拔；网页锁定位置后以 loc.json 为准
+horizontalAccuracy = input,"39",tag=水平精度(米),desc=网页锁定位置后以 loc.json 为准
+verticalAccuracy = input,"1000",tag=垂直精度(米),desc=网页锁定位置后以 loc.json 为准
+address = input,"",tag=地址搜索(可选),desc=填写地名后由定时任务解析并缓存
+configHost = input,"https://你的域名",tag=配置服务器,desc=本项目访问地址，不要以斜杠结尾
+configToken = input,"你的Token",tag=配置 Token,desc=与 Web 面板 TOKEN 保持一致
+configUrl = input,"",tag=远程配置 URL,desc=可直接填写完整 loc.json URL，优先级高于 configHost+configToken
+debug = switch,false,tag=调试日志,desc=排查问题时开启，日志中搜索 Location spoofer
+
+[Script]
+http-request ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc script-path=https://你的域名/location-spoofer.js, requires-body=false, timeout=3, tag=iOS Location Spoofer Prepare, argument=[{debug}]
+http-response ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc script-path=https://你的域名/location-spoofer.js, requires-body=true, binary-body-mode=true, timeout=30, tag=iOS Location Spoofer, argument=[{enabled},{latitude},{longitude},{altitude},{horizontalAccuracy},{verticalAccuracy},{address},{configHost},{configToken},{configUrl},{debug}]
+cron "*/15 * * * *" script-path=https://你的域名/location-spoofer.js, timeout=30, tag=iOS Location Spoofer Sync, argument=[{address},{configHost},{configToken},{configUrl},{debug}]
+
+[mitm]
+hostname = gs-loc.apple.com, gs-loc-cn.apple.com, gsp-ssl.ls.apple.com, bluedot.is.autonavi.com, bluedot.is.autonavi.com.gds.alibabadns.com
