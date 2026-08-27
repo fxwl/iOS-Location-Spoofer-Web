@@ -15,7 +15,7 @@ verticalAccuracy = input,"1000",tag=垂直精度(米),desc=远程配置不可用
 address = input,"",tag=地址搜索(可选),desc=填写地名后由定时任务解析；Web 面板 loc.json 优先级更高
 configHost = input,"https://你的域名",tag=配置服务器,desc=自建面板地址，不要末尾斜杠
 configToken = input,"你的Token",tag=配置Token,desc=与 Web 面板 TOKEN 保持一致
-configUrl = input,"https://你的域名/loc.json?token=你的Token",tag=远程配置URL,desc=已自动填写；如手动修改则此项优先
+configUrl = input,"https://你的域名/loc.json?token=你的TokenURL",tag=远程配置URL,desc=已自动填写；如手动修改则此项优先
 debug = switch,false,tag=调试日志,desc=遇到问题时开启，在 Loon 日志中搜索 Location spoofer
 
 [Script]

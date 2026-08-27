@@ -18,6 +18,7 @@ export async function onRequestGet(context) {
 
   content = content.replace(/https:\/\/你的域名/g, origin);
   content = content.replace(/你的域名/g, host);
+  content = content.replace(/你的TokenURL/g, encodeURIComponent(token));
   content = content.replace(/你的Token/g, token);
 
   return new Response(content, {
