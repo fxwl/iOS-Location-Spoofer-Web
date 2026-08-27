@@ -1,0 +1,27 @@
+#!name=iOS Location Spoofer (Self-Hosted)
+#!desc=拦截 Apple 定位服务回传的坐标并替换为 Web 面板锁定的位置（Loon 插件 / 自建服务版）
+#!homepage=https://github.com/fxwl/iOS-Location-Spoofer-Web
+
+# Loon 插件参数必须使用 argument=[{参数名},...] 传递。
+# 默认通过本项目 loc.json 读取 Web 面板锁定坐标；纬度/经度等为远程配置不可用时的备用值。
+
+[Argument]
+enabled = switch,true,tag=启用定位修改,desc=关闭后脚本直接放行原始定位数据
+latitude = input,"39.90872",tag=纬度(备用),desc=远程配置不可用时生效
+longitude = input,"116.39748",tag=经度(备用),desc=远程配置不可用时生效
+altitude = input,"44",tag=海拔(米),desc=远程配置不可用时生效
+horizontalAccuracy = input,"39",tag=水平精度(米),desc=远程配置不可用时生效
+verticalAccuracy = input,"1000",tag=垂直精度(米),desc=远程配置不可用时生效
+address = input,"",tag=地址搜索(可选),desc=填写地名后由定时任务解析；Web 面板 loc.json 优先级更高
+configHost = input,"https://你的域名",tag=配置服务器,desc=自建面板地址，不要末尾斜杠
+configToken = input,"你的Token",tag=配置Token,desc=与 Web 面板 TOKEN 保持一致
+configUrl = input,"https://你的域名/loc.json?token=你的Token",tag=远程配置URL,desc=已自动填写；如手动修改则此项优先
+debug = switch,false,tag=调试日志,desc=遇到问题时开启，在 Loon 日志中搜索 Location spoofer
+
+[Script]
+http-request ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc script-path=https://你的域名/location-spoofer.js, requires-body=false, timeout=3, tag=iOS Location Spoofer Prepare, argument=[{debug}]
+http-response ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|gsp-ssl\.ls\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc script-path=https://你的域名/location-spoofer.js, requires-body=true, binary-body-mode=true, timeout=30, tag=iOS Location Spoofer, argument=[{enabled},{latitude},{longitude},{altitude},{horizontalAccuracy},{verticalAccuracy},{address},{configHost},{configToken},{configUrl},{debug}]
+cron "*/15 * * * *" script-path=https://你的域名/location-spoofer.js, timeout=30, tag=iOS Location Spoofer Sync, argument=[{address},{configHost},{configToken},{configUrl},{debug}]
+
+[mitm]
+hostname = gs-loc.apple.com, gs-loc-cn.apple.com, gsp-ssl.ls.apple.com, bluedot.is.autonavi.com, bluedot.is.autonavi.com.gds.alibabadns.com
