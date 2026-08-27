@@ -6,8 +6,104 @@
  * ⚠️【特别声明】：本项目完全免费开源，严禁以任何形式进行二次售卖、转售、商业收费代搭建！
  */
 
+function apiJson(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*'
+    }
+  });
+}
+
+function textValue(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).join('');
+  return value == null ? '' : String(value);
+}
+
+async function handleAmapSearch(request, env, url) {
+  const token = url.searchParams.get('token');
+  if (env.TOKEN && token !== env.TOKEN) {
+    return apiJson({ ok: false, error: 'Unauthorized' }, 401);
+  }
+
+  const keywords = (url.searchParams.get('keywords') || '').trim();
+  if (!keywords) {
+    return apiJson({ ok: false, error: '请输入搜索关键词' }, 400);
+  }
+
+  if (!env.AMAP_KEY) {
+    return apiJson({ ok: false, error: '未配置 AMAP_KEY，请在 Cloudflare Pages 中添加高德 Web 服务 API Key' }, 503);
+  }
+
+  const endpoint = new URL('https://restapi.amap.com/v3/place/text');
+  endpoint.searchParams.set('key', env.AMAP_KEY);
+  endpoint.searchParams.set('keywords', keywords.slice(0, 80));
+  endpoint.searchParams.set('offset', '12');
+  endpoint.searchParams.set('page', '1');
+  endpoint.searchParams.set('extensions', 'base');
+  endpoint.searchParams.set('children', '1');
+
+  try {
+    const response = await fetch(endpoint.toString(), {
+      headers: { Accept: 'application/json' }
+    });
+    const body = await response.text();
+    let data;
+
+    try {
+      data = JSON.parse(body);
+    } catch (_) {
+      return apiJson({
+        ok: false,
+        error: `高德 API 返回了非 JSON 数据 (HTTP ${response.status})`,
+        preview: body.slice(0, 160)
+      }, 502);
+    }
+
+    if (!response.ok || data.status !== '1') {
+      const info = textValue(data.info) || `HTTP ${response.status}`;
+      const infocode = textValue(data.infocode);
+      let message = `高德搜索失败：${info}`;
+      if (infocode) message += ` (${infocode})`;
+      message += '。请确认 AMAP_KEY 为“Web 服务 API”类型 Key，并已启用 Web 服务权限。';
+      return apiJson({ ok: false, error: message, infocode }, 502);
+    }
+
+    const pois = Array.isArray(data.pois) ? data.pois : [];
+    const results = pois
+      .filter((poi) => poi && typeof poi.location === 'string' && poi.location.includes(','))
+      .map((poi) => ({
+        name: textValue(poi.name) || '未命名地点',
+        address: textValue(poi.address),
+        district: [textValue(poi.pname), textValue(poi.cityname), textValue(poi.adname)]
+          .filter(Boolean)
+          .filter((value, index, array) => array.indexOf(value) === index)
+          .join(''),
+        location: poi.location
+      }))
+      .slice(0, 10);
+
+    return apiJson({ ok: true, provider: 'amap', results });
+  } catch (error) {
+    return apiJson({
+      ok: false,
+      error: `高德搜索请求失败：${error && error.message ? error.message : String(error)}`
+    }, 502);
+  }
+}
+
 export async function onRequestGet(context) {
   const { request, env } = context;
+  const requestUrl = new URL(request.url);
+
+  // Reuse the already-working root Pages Function as the AMap API endpoint.
+  // This avoids relying on a newly generated /search route or global middleware.
+  if (requestUrl.searchParams.get('__api') === 'search') {
+    return handleAmapSearch(request, env, requestUrl);
+  }
+
   const response = await env.ASSETS.fetch(request);
 
   if (!response.ok) {
@@ -19,7 +115,7 @@ export async function onRequestGet(context) {
 
   // Do not expose the real AMap key to the browser. The existing UI only needs a
   // truthy value to enable the AMap search path; requests are transparently routed
-  // through the same-origin /search Pages Function below.
+  // through the same-origin root Pages Function below.
   const runtimeScript = `<script>
 window.__CFG__=${JSON.stringify({ token, amapKey: hasAmap ? 'server-proxy' : '' })};
 (function(){
@@ -34,40 +130,58 @@ window.__CFG__=${JSON.stringify({ token, amapKey: hasAmap ? 'server-proxy' : '' 
     });
   }
 
+  function parseProxyResponse(resp){
+    return resp.text().then(function(text){
+      var data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        var preview = String(text || '').replace(/\s+/g, ' ').slice(0, 120);
+        throw new Error('搜索接口返回了非 JSON 数据 (HTTP ' + resp.status + ')' + (preview ? '：' + preview : ''));
+      }
+      return { resp: resp, data: data };
+    });
+  }
+
   window.fetch = function(input, init){
     var raw = typeof input === 'string' ? input : (input && input.url) || '';
     if (raw.indexOf('https://restapi.amap.com/v3/assistant/inputtips?') === 0) {
       try {
         var source = new URL(raw);
         var keywords = source.searchParams.get('keywords') || '';
-        var proxy = new URL('/search', window.location.origin);
+        var proxy = new URL('/', window.location.origin);
+        proxy.searchParams.set('__api', 'search');
         proxy.searchParams.set('keywords', keywords);
         var authToken = localStorage.getItem('gps_token') || serverToken || '';
         if (authToken) proxy.searchParams.set('token', authToken);
 
-        return nativeFetch(proxy.toString(), { method: 'GET', credentials: 'same-origin' })
-          .then(function(resp){
-            return resp.json().then(function(data){
-              if (!resp.ok || !data || data.ok !== true) {
-                amapError = (data && data.error) || ('高德搜索失败 (HTTP ' + resp.status + ')');
-                return new Response(JSON.stringify({status:'0',info:amapError,tips:[]}), {
-                  status: 200,
-                  headers: {'Content-Type':'application/json'}
-                });
-              }
-              amapError = '';
-              return new Response(JSON.stringify({status:'1',info:'OK',tips:data.results || []}), {
+        return nativeFetch(proxy.toString(), { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
+          .then(parseProxyResponse)
+          .then(function(result){
+            var resp = result.resp;
+            var data = result.data;
+            if (!resp.ok || !data || data.ok !== true) {
+              amapError = (data && data.error) || ('高德搜索失败 (HTTP ' + resp.status + ')');
+              return new Response(JSON.stringify({status:'0',info:amapError,tips:[]}), {
                 status: 200,
                 headers: {'Content-Type':'application/json'}
               });
+            }
+            amapError = '';
+            return new Response(JSON.stringify({status:'1',info:'OK',tips:data.results || []}), {
+              status: 200,
+              headers: {'Content-Type':'application/json'}
             });
           })
           .catch(function(error){
             amapError = '高德搜索请求失败：' + (error && error.message ? error.message : String(error));
-            throw error;
+            return new Response(JSON.stringify({status:'0',info:amapError,tips:[]}), {
+              status: 200,
+              headers: {'Content-Type':'application/json'}
+            });
           });
-      } catch (_) {
-        // Fall through to the original fetch implementation.
+      } catch (error) {
+        amapError = '高德搜索请求失败：' + (error && error.message ? error.message : String(error));
       }
     }
     return nativeFetch(input, init);
