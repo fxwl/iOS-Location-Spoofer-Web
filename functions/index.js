@@ -22,111 +22,177 @@ function textValue(value) {
   return value == null ? '' : String(value);
 }
 
-async function handleAmapSearch(env, url) {
+function uniqueText(values) {
+  return values.map(textValue).map((v) => v.trim()).filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index);
+}
+
+function outOfChina(lat, lng) {
+  return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+}
+
+function transformLat(x, y) {
+  let ret = -100 + 2 * x + 3 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  ret += (20 * Math.sin(6 * x * Math.PI) + 20 * Math.sin(2 * x * Math.PI)) * 2 / 3;
+  ret += (20 * Math.sin(y * Math.PI) + 40 * Math.sin(y / 3 * Math.PI)) * 2 / 3;
+  ret += (160 * Math.sin(y / 12 * Math.PI) + 320 * Math.sin(y * Math.PI / 30)) * 2 / 3;
+  return ret;
+}
+
+function transformLng(x, y) {
+  let ret = 300 + x + 2 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  ret += (20 * Math.sin(6 * x * Math.PI) + 20 * Math.sin(2 * x * Math.PI)) * 2 / 3;
+  ret += (20 * Math.sin(x * Math.PI) + 40 * Math.sin(x / 3 * Math.PI)) * 2 / 3;
+  ret += (150 * Math.sin(x / 12 * Math.PI) + 300 * Math.sin(x / 30 * Math.PI)) * 2 / 3;
+  return ret;
+}
+
+function wgsToGcj(lat, lng) {
+  if (outOfChina(lat, lng)) return [lat, lng];
+  const a = 6378245.0;
+  const ee = 0.00669342162296594323;
+  let dLat = transformLat(lng - 105.0, lat - 35.0);
+  let dLng = transformLng(lng - 105.0, lat - 35.0);
+  const radLat = lat / 180.0 * Math.PI;
+  let magic = Math.sin(radLat);
+  magic = 1 - ee * magic * magic;
+  const sqrtMagic = Math.sqrt(magic);
+  dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI);
+  dLng = (dLng * 180.0) / (a / sqrtMagic * Math.cos(radLat) * Math.PI);
+  return [lat + dLat, lng + dLng];
+}
+
+function legacyLocation(lat, lng) {
+  const gcj = wgsToGcj(Number(lat), Number(lng));
+  return `${gcj[1].toFixed(6)},${gcj[0].toFixed(6)}`;
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url.toString(), {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'iOS-Location-Spoofer-Web/1.0'
+    }
+  });
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (_) {
+    throw new Error(`HTTP ${response.status} 返回了非 JSON 数据`);
+  }
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return data;
+}
+
+async function searchPhoton(keywords) {
+  const endpoint = new URL('https://photon.komoot.io/api/');
+  endpoint.searchParams.set('q', keywords.slice(0, 120));
+  endpoint.searchParams.set('limit', '10');
+  endpoint.searchParams.set('lang', 'zh');
+
+  const data = await fetchJson(endpoint);
+  const features = Array.isArray(data && data.features) ? data.features : [];
+  return features.map((feature) => {
+    const p = feature && feature.properties ? feature.properties : {};
+    const coords = feature && feature.geometry && Array.isArray(feature.geometry.coordinates)
+      ? feature.geometry.coordinates : [];
+    const lng = Number(coords[0]);
+    const lat = Number(coords[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    const name = textValue(p.name) || textValue(p.street) || textValue(p.city) || textValue(p.locality) || '未命名地点';
+    const address = uniqueText([
+      [textValue(p.street), textValue(p.housenumber)].filter(Boolean).join(' '),
+      p.locality,
+      p.district
+    ]).join(' · ');
+    const district = uniqueText([p.city, p.county, p.state, p.country]).join('');
+    return { name, address, district, location: legacyLocation(lat, lng) };
+  }).filter(Boolean).slice(0, 10);
+}
+
+async function searchOpenMeteo(keywords) {
+  const endpoint = new URL('https://geocoding-api.open-meteo.com/v1/search');
+  endpoint.searchParams.set('name', keywords.slice(0, 120));
+  endpoint.searchParams.set('count', '10');
+  endpoint.searchParams.set('language', 'zh');
+  endpoint.searchParams.set('format', 'json');
+
+  const data = await fetchJson(endpoint);
+  const items = Array.isArray(data && data.results) ? data.results : [];
+  return items.map((item) => {
+    const lat = Number(item.latitude);
+    const lng = Number(item.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return {
+      name: textValue(item.name) || '未命名地点',
+      address: uniqueText([item.admin3, item.admin4]).join(' · '),
+      district: uniqueText([item.admin2, item.admin1, item.country]).join(''),
+      location: legacyLocation(lat, lng)
+    };
+  }).filter(Boolean).slice(0, 10);
+}
+
+async function handleFreeSearch(env, url) {
   const token = url.searchParams.get('token');
   if (env.TOKEN && token !== env.TOKEN) {
     return apiJson({ ok: false, error: 'Unauthorized' }, 401);
   }
 
   const keywords = (url.searchParams.get('keywords') || '').trim();
-  if (!keywords) {
-    return apiJson({ ok: false, error: '请输入搜索关键词' }, 400);
-  }
+  if (!keywords) return apiJson({ ok: false, error: '请输入搜索关键词' }, 400);
 
-  if (!env.AMAP_KEY) {
-    return apiJson({ ok: false, error: '未配置 AMAP_KEY，请在 Cloudflare Pages 中添加高德 Web 服务 API Key' }, 503);
-  }
-
-  const endpoint = new URL('https://restapi.amap.com/v3/place/text');
-  endpoint.searchParams.set('key', env.AMAP_KEY);
-  endpoint.searchParams.set('keywords', keywords.slice(0, 80));
-  endpoint.searchParams.set('offset', '12');
-  endpoint.searchParams.set('page', '1');
-  endpoint.searchParams.set('extensions', 'base');
-  endpoint.searchParams.set('children', '1');
-
+  let photonError = '';
   try {
-    const response = await fetch(endpoint.toString(), {
-      headers: { Accept: 'application/json' }
-    });
-    const body = await response.text();
-    let data;
-
-    try {
-      data = JSON.parse(body);
-    } catch (_) {
-      return apiJson({
-        ok: false,
-        error: `高德 API 返回了非 JSON 数据 (HTTP ${response.status})`,
-        preview: body.slice(0, 160)
-      }, 502);
-    }
-
-    if (!response.ok || data.status !== '1') {
-      const info = textValue(data.info) || `HTTP ${response.status}`;
-      const infocode = textValue(data.infocode);
-      let message = `高德搜索失败：${info}`;
-      if (infocode) message += ` (${infocode})`;
-      message += '。请确认 AMAP_KEY 为“Web 服务 API”类型 Key，并已启用 Web 服务权限。';
-      return apiJson({ ok: false, error: message, infocode }, 502);
-    }
-
-    const pois = Array.isArray(data.pois) ? data.pois : [];
-    const results = pois
-      .filter((poi) => poi && typeof poi.location === 'string' && poi.location.includes(','))
-      .map((poi) => ({
-        name: textValue(poi.name) || '未命名地点',
-        address: textValue(poi.address),
-        district: [textValue(poi.pname), textValue(poi.cityname), textValue(poi.adname)]
-          .filter(Boolean)
-          .filter((value, index, array) => array.indexOf(value) === index)
-          .join(''),
-        location: poi.location
-      }))
-      .slice(0, 10);
-
-    return apiJson({ ok: true, provider: 'amap', results });
+    const results = await searchPhoton(keywords);
+    if (results.length) return apiJson({ ok: true, provider: 'photon', results });
   } catch (error) {
+    photonError = error && error.message ? error.message : String(error);
+  }
+
+  let openMeteoError = '';
+  try {
+    const results = await searchOpenMeteo(keywords);
+    if (results.length) return apiJson({ ok: true, provider: 'open-meteo', results });
+  } catch (error) {
+    openMeteoError = error && error.message ? error.message : String(error);
+  }
+
+  if (photonError && openMeteoError) {
     return apiJson({
       ok: false,
-      error: `高德搜索请求失败：${error && error.message ? error.message : String(error)}`
+      error: `免费搜索服务暂时不可用：Photon ${photonError}；Open-Meteo ${openMeteoError}`
     }, 502);
   }
+
+  return apiJson({ ok: true, provider: photonError ? 'open-meteo' : 'photon', results: [] });
 }
 
 export async function onRequestGet(context) {
   const { request, env } = context;
   const requestUrl = new URL(request.url);
 
-  // Reuse the already-working root Pages Function as the AMap API endpoint.
-  // This avoids relying on a newly generated /search route or global middleware.
   if (requestUrl.searchParams.get('__api') === 'search') {
-    return handleAmapSearch(env, requestUrl);
+    return handleFreeSearch(env, requestUrl);
   }
 
   const response = await env.ASSETS.fetch(request);
-
-  if (!response.ok) {
-    return response;
-  }
+  if (!response.ok) return response;
 
   const token = env.TOKEN || '';
-  const hasAmap = Boolean(env.AMAP_KEY);
 
-  // Do not expose the real AMap key to the browser. The existing UI only needs a
-  // truthy value to enable the AMap search path; requests are transparently routed
-  // through the same-origin root Pages Function below.
   const runtimeScript = `<script>
-window.__CFG__=${JSON.stringify({ token, amapKey: hasAmap ? 'server-proxy' : '' })};
+window.__CFG__=${JSON.stringify({ token, amapKey: 'free-osm' })};
 (function(){
   'use strict';
   var nativeFetch = window.fetch.bind(window);
   var serverToken = ${JSON.stringify(token)};
-  var amapError = '';
+  var searchError = '';
 
   function escapeHtml(value){
-    return String(value || '').replace(/[&<>\"']/g,function(ch){
-      return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch];
+    return String(value || '').replace(/[&<>\\"']/g,function(ch){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','\\"':'&quot;',"'":'&#39;'}[ch];
     });
   }
 
@@ -136,13 +202,16 @@ window.__CFG__=${JSON.stringify({ token, amapKey: hasAmap ? 'server-proxy' : '' 
       try {
         data = JSON.parse(text);
       } catch (_) {
-        var preview = String(text || '').replace(/\s+/g, ' ').slice(0, 120);
+        var preview = String(text || '').replace(/\\s+/g, ' ').slice(0, 120);
         throw new Error('搜索接口返回了非 JSON 数据 (HTTP ' + resp.status + ')' + (preview ? '：' + preview : ''));
       }
       return { resp: resp, data: data };
     });
   }
 
+  // Compatibility shim: the original static page uses the old AMap branch when
+  // amapKey is truthy. We intercept that request before it leaves the browser and
+  // send it to our own free Photon/Open-Meteo search endpoint instead.
   window.fetch = function(input, init){
     var raw = typeof input === 'string' ? input : (input && input.url) || '';
     if (raw.indexOf('https://restapi.amap.com/v3/assistant/inputtips?') === 0) {
@@ -154,8 +223,6 @@ window.__CFG__=${JSON.stringify({ token, amapKey: hasAmap ? 'server-proxy' : '' 
         proxy.searchParams.set('keywords', keywords);
         var authToken = localStorage.getItem('gps_token') || serverToken || '';
         if (authToken) proxy.searchParams.set('token', authToken);
-        // Cache-buster prevents a stale HTML root response from a previous deployment
-        // being reused for this API-shaped request on a custom domain.
         proxy.searchParams.set('_ts', String(Date.now()));
 
         return nativeFetch(proxy.toString(), { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
@@ -164,27 +231,27 @@ window.__CFG__=${JSON.stringify({ token, amapKey: hasAmap ? 'server-proxy' : '' 
             var resp = result.resp;
             var data = result.data;
             if (!resp.ok || !data || data.ok !== true) {
-              amapError = (data && data.error) || ('高德搜索失败 (HTTP ' + resp.status + ')');
-              return new Response(JSON.stringify({status:'0',info:amapError,tips:[]}), {
+              searchError = (data && data.error) || ('免费搜索失败 (HTTP ' + resp.status + ')');
+              return new Response(JSON.stringify({status:'0',info:searchError,tips:[]}), {
                 status: 200,
                 headers: {'Content-Type':'application/json'}
               });
             }
-            amapError = '';
+            searchError = '';
             return new Response(JSON.stringify({status:'1',info:'OK',tips:data.results || []}), {
               status: 200,
               headers: {'Content-Type':'application/json'}
             });
           })
           .catch(function(error){
-            amapError = '高德搜索请求失败：' + (error && error.message ? error.message : String(error));
-            return new Response(JSON.stringify({status:'0',info:amapError,tips:[]}), {
+            searchError = '免费搜索请求失败：' + (error && error.message ? error.message : String(error));
+            return new Response(JSON.stringify({status:'0',info:searchError,tips:[]}), {
               status: 200,
               headers: {'Content-Type':'application/json'}
             });
           });
       } catch (error) {
-        amapError = '高德搜索请求失败：' + (error && error.message ? error.message : String(error));
+        searchError = '免费搜索请求失败：' + (error && error.message ? error.message : String(error));
       }
     }
     return nativeFetch(input, init);
@@ -194,9 +261,9 @@ window.__CFG__=${JSON.stringify({ token, amapKey: hasAmap ? 'server-proxy' : '' 
     var resultBox = document.getElementById('search-results');
     if (resultBox && typeof MutationObserver !== 'undefined') {
       new MutationObserver(function(){
-        if (amapError && /未找到结果|搜索失败|无有效定位结果/.test(resultBox.textContent || '')) {
-          resultBox.innerHTML = '<div class="result-row"><div class="name">高德搜索不可用</div><div class="sub">' + escapeHtml(amapError) + '</div></div>';
-          amapError = '';
+        if (searchError && /未找到结果|搜索失败|无有效定位结果/.test(resultBox.textContent || '')) {
+          resultBox.innerHTML = '<div class="result-row"><div class="name">免费搜索不可用</div><div class="sub">' + escapeHtml(searchError) + '</div></div>';
+          searchError = '';
         }
       }).observe(resultBox, {childList:true, subtree:true});
     }
@@ -275,8 +342,6 @@ window.__CFG__=${JSON.stringify({ token, amapKey: hasAmap ? 'server-proxy' : '' 
       if (btn) render(btn.dataset.client);
     });
 
-    // Capture phase is required so the original Shadowrocket click handler does not
-    // run when Loon is selected.
     importButton.addEventListener('click', function(event){
       if (selected !== 'loon') return;
       event.preventDefault();
