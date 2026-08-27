@@ -9,17 +9,17 @@ export async function onRequestGet(context) {
   const { request, env } = context;
 
   if (!authOk(request, env)) {
-    return errorResponse('Unauthorized', 401);
+    return jsonResponse({ ok: false, error: 'Unauthorized' }, 401);
   }
 
   const url = new URL(request.url);
   const keywords = (url.searchParams.get('keywords') || '').trim();
   if (!keywords) {
-    return errorResponse('请输入搜索关键词', 400);
+    return jsonResponse({ ok: false, error: '请输入搜索关键词' }, 400);
   }
 
   if (!env.AMAP_KEY) {
-    return errorResponse('未配置 AMAP_KEY，请在 Cloudflare Pages 中添加高德 Web 服务 API Key', 503);
+    return jsonResponse({ ok: false, error: '未配置 AMAP_KEY，请在 Cloudflare Pages 中添加高德 Web 服务 API Key' }, 503);
   }
 
   const endpoint = new URL('https://restapi.amap.com/v3/place/text');
@@ -32,14 +32,18 @@ export async function onRequestGet(context) {
 
   try {
     const response = await fetch(endpoint.toString(), {
-      headers: { 'Accept': 'application/json' }
+      headers: { Accept: 'application/json' }
     });
     const body = await response.text();
     let data;
     try {
       data = JSON.parse(body);
     } catch (_) {
-      return errorResponse('高德 API 返回了无法解析的数据', 502);
+      return jsonResponse({
+        ok: false,
+        error: `高德 API 返回了非 JSON 数据 (HTTP ${response.status})`,
+        preview: body.slice(0, 160)
+      }, 502);
     }
 
     if (!response.ok || data.status !== '1') {
@@ -67,6 +71,9 @@ export async function onRequestGet(context) {
 
     return jsonResponse({ ok: true, provider: 'amap', results });
   } catch (error) {
-    return errorResponse(`高德搜索请求失败：${error && error.message ? error.message : String(error)}`, 502);
+    return jsonResponse({
+      ok: false,
+      error: `高德搜索请求失败：${error && error.message ? error.message : String(error)}`
+    }, 502);
   }
 }
