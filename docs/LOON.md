@@ -26,8 +26,15 @@
 - 定时同步：每 15 分钟刷新远程配置缓存。
 - Loon 专用 `$done` 二进制响应结构兼容。
 
-## 高德搜索
+## 免费地点搜索
 
-`AMAP_KEY` 必须使用高德开放平台申请的 **Web 服务 API** 类型 Key，而不是 Web 端 JS API Key。
+Web 面板的地点搜索不再依赖高德 API，也不需要配置 `AMAP_KEY`。
 
-本项目的搜索请求由 Cloudflare Pages Functions 的 `/search` 端点在服务端调用高德 POI 关键字搜索，浏览器不再直接暴露 `AMAP_KEY`。如果 Key 无效、权限不足或被限流，面板会直接显示高德返回的错误信息，而不是统一显示“未找到结果”。
+搜索顺序：
+
+1. **Photon / OpenStreetMap**：作为主搜索源，支持地点与 POI 搜索。
+2. **Open-Meteo Geocoding**：Photon 没有结果或暂时不可用时自动兜底。
+
+两个服务都无需 API Key。搜索结果原始坐标为 WGS84，Pages Function 会在国内区域自动转换为页面现有地图逻辑所需的 GCJ-02 坐标，因此切换高德图层、OSM 或 Esri 图层时不会因为坐标系不同再次产生偏移。
+
+Cloudflare Pages 中只需要保留 `TOKEN` 与 `SPOOFER_DATA` 等项目自身配置；以前设置过的 `AMAP_KEY` 可以删除，也可以保留（当前代码不会读取它）。
