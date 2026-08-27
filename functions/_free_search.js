@@ -88,11 +88,10 @@ async function searchPhoton(keywords) {
   const endpoint = new URL('https://photon.komoot.io/api/');
   endpoint.searchParams.set('q', keywords.slice(0, 120));
   endpoint.searchParams.set('limit', '10');
-  // Do not force lang=zh here. Public Photon instances only allow languages that
-  // were indexed by that instance. Omitting lang lets Photon search local OSM names,
-  // including Chinese names, instead of rejecting unsupported language codes.
-
-  const data = await fetchJson(endpoint, { 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.5' });
+  // Do not send lang or Accept-Language. Public Photon instances can only use
+  // languages indexed by that instance; leaving both unset lets the server use its
+  // default/local-name search while the Chinese query text is still sent unchanged.
+  const data = await fetchJson(endpoint);
   const features = Array.isArray(data && data.features) ? data.features : [];
   return features.map((feature) => {
     const p = feature && feature.properties ? feature.properties : {};
