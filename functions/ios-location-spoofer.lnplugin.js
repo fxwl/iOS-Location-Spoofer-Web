@@ -1,3 +1,7 @@
+function escapeLoonInput(value) {
+  return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 export async function onRequestGet(context) {
   const { request, env } = context;
 
@@ -11,7 +15,7 @@ export async function onRequestGet(context) {
   const host = request.headers.get('host') || url.host;
   const protocol = request.headers.get('x-forwarded-proto') || url.protocol.replace(':', '');
   const origin = `${protocol}://${host}`;
-  const token = url.searchParams.get('token') || '';
+  const token = escapeLoonInput(url.searchParams.get('token') || '');
 
   content = content.replace(/https:\/\/你的域名/g, origin);
   content = content.replace(/你的域名/g, host);
